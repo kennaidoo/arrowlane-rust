@@ -10,6 +10,9 @@
   boundary is effective.
 - Wrap `al_free` and `al_free_reason` in the same panic boundary.
 - Check the frame header `ncols` against the decoded schema.
+- Do not select the `shm` lane in `transit` or `transit_chunks` unless a token is
+  supplied. This matches the Python `transit` rule and avoids a Linux-only
+  `LaneUnavailable` failure.
 - Decode an already parsed frame with `unpack_frame` instead of parsing the wire
   twice in `al_inspect` and the CLI.
 

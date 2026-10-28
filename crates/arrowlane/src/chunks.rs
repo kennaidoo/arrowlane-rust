@@ -490,7 +490,7 @@ pub fn transit_chunks<'a>(
     let mut selection = Selection::new(workload, options.topology);
     selection.policy = options.policy;
     selection.allowed = options.allowed.clone();
-    selection.shm_ready = options.token.is_some() || crate::shm::is_ready(options.directory);
+    selection.shm_ready = options.token.is_some();
     selection.min_gain = options.min_gain;
     let decision = select_plan(crate::costmodel::load_default(), &selection)?;
     let chunk_options = ChunkOptions {
@@ -666,6 +666,7 @@ mod tests {
         };
         let (frames, decision) = transit_chunks(batches(1000), schema(), &options).unwrap();
         assert!(!decision.lane.is_empty());
+        assert_ne!(decision.lane, "shm");
         let frames = frames.collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(frames.len(), 4);
         let decoded = unpack_chunks(

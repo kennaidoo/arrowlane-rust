@@ -39,7 +39,7 @@ pub fn plan_with(batch: &RecordBatch, options: &TransitOptions<'_>) -> Result<De
     let mut selection = Selection::new(workload, options.topology);
     selection.policy = options.policy;
     selection.allowed = options.allowed.clone();
-    selection.shm_ready = options.token.is_some() || crate::shm::is_ready(options.directory);
+    selection.shm_ready = options.token.is_some();
     selection.min_gain = options.min_gain;
     let model = match options.model {
         Some(model) => model.clone(),
@@ -215,6 +215,7 @@ mod tests {
         let options = TransitOptions::default();
         let (wire, decision) = transit(&source, &options).unwrap();
         assert_ne!(decision.lane, "json");
+        assert_ne!(decision.lane, "shm");
         let out = unpack(
             &wire,
             None,
