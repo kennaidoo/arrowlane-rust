@@ -5,6 +5,7 @@
 //! asks for it. A blocking write or a bounded queue therefore applies backpressure
 //! to the producer.
 
+use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::path::Path;
 
@@ -17,8 +18,7 @@ use crate::frame::{
     write_frame,
 };
 use crate::lanes::lane_for;
-use crate::select::{Decision, Policy, Topology};
-use crate::transit::TransitOptions;
+use crate::select::{Decision, Policy, Selection, Topology, Workload, select_plan};
 
 /// Rows per chunk when the caller does not choose.
 pub const DEFAULT_CHUNK_ROWS: usize = 50_000;
@@ -66,8 +66,8 @@ fn split_batch_at(batch: &RecordBatch, rows: usize) -> Result<(RecordBatch, Reco
 /// Options for the chunk writes.
 #[derive(Debug, Clone)]
 pub struct ChunkOptions<'a> {
-    /// Lane to use.
-    pub lane: &'a str,
+    /// Lane to use. An owned value lets [`transit_chunks`] use its decision.
+    pub lane: Cow<'a, str>,
     /// Shared memory token.
     pub token: Option<&'a str>,
     /// Shared memory directory.
@@ -78,17 +78,29 @@ pub struct ChunkOptions<'a> {
     pub rows_per_chunk: usize,
     /// Payload cap per chunk.
     pub max_payload: usize,
+    /// Where the endpoints sit.
+    pub topology: Topology,
+    /// What the caller wants optimised.
+    pub policy: Policy,
+    /// Lane allowlist. `None` means every lane in the model.
+    pub allowed: Option<Vec<String>>,
+    /// Minimum fractional gain before a lane other than `json` is chosen.
+    pub min_gain: f64,
 }
 
 impl Default for ChunkOptions<'_> {
     fn default() -> Self {
         Self {
-            lane: "ipc",
+            lane: Cow::Borrowed("ipc"),
             token: None,
             directory: None,
             level: None,
             rows_per_chunk: DEFAULT_CHUNK_ROWS,
             max_payload: MAX_PAYLOAD_BYTES,
+            topology: Topology::SameNetwork,
+            policy: Policy::Latency,
+            allowed: None,
+            min_gain: 0.10,
         }
     }
 }
@@ -113,7 +125,7 @@ impl<'a> ChunkFrames<'a> {
         options: &ChunkOptions<'a>,
     ) -> Result<Self> {
         validate(options.rows_per_chunk, options.max_payload)?;
-        let chosen = lane_for(options.lane, options.token, options.directory)?;
+        let chosen = lane_for(options.lane.as_ref(), options.token, options.directory)?;
         let mut pending: Vec<RecordBatch> = Vec::new();
         for batch in batches {
             let mut remaining = batch;
@@ -223,7 +235,7 @@ pub fn pack_chunks<'a>(
     batches: Vec<RecordBatch>,
     schema: std::sync::Arc<Schema>,
     options: &ChunkOptions<'a>,
-) -> Result<impl Iterator<Item = Result<Vec<u8>>> + 'a> {
+) -> Result<impl Iterator<Item = Result<Vec<u8>>> + 'a + use<'a>> {
     let frames = ChunkFrames::new(batches, schema, options)?;
     let max_payload = options.max_payload;
     Ok(frames.map(move |frame| {
@@ -251,109 +263,219 @@ pub fn write_chunks<W: Write>(
     Ok((chunks, total))
 }
 
-fn decode_chunks<I>(
-    frames: I,
-    token: Option<&str>,
-    directory: Option<&Path>,
-    max_uncompressed: usize,
-) -> Result<Vec<RecordBatch>>
-where
-    I: IntoIterator<Item = Result<Frame>>,
-{
-    let mut stream_id: Option<String> = None;
-    let mut last_seen = false;
-    let mut batches: Vec<RecordBatch> = Vec::new();
-    for (expected, frame) in frames.into_iter().enumerate() {
-        let frame = frame?;
-        let info = frame
-            .chunk
-            .as_ref()
-            .ok_or_else(|| ArrowLaneError::Chunk("frame carries no chunk metadata".to_string()))?
-            .clone();
-        match &stream_id {
-            None => stream_id = Some(info.id.clone()),
-            Some(existing) if *existing != info.id => {
-                return Err(ArrowLaneError::Chunk(
-                    "chunk id changed mid stream".to_string(),
-                ));
-            }
-            Some(_) => {}
-        }
-        if last_seen {
-            return Err(ArrowLaneError::Chunk(
-                "chunk after the last chunk".to_string(),
-            ));
-        }
-        if info.index != expected as u64 {
-            return Err(ArrowLaneError::Chunk(format!(
-                "chunk index {}, expected {expected}",
-                info.index
-            )));
-        }
-        let chosen = lane_for(frame.try_lane()?, token, directory)?;
-        let batch = chosen.decode(&frame, Some(max_uncompressed))?;
-        batches.push(batch);
-        last_seen = info.last;
-    }
-    if !last_seen {
-        return Err(ArrowLaneError::Chunk(
-            "stream ended before the last chunk".to_string(),
-        ));
-    }
-    if batches.is_empty() {
-        return Err(ArrowLaneError::Chunk("chunk stream is empty".to_string()));
-    }
-    Ok(batches)
+/// State shared by the streaming chunk decoders.
+#[derive(Default)]
+struct ChunkState {
+    stream_id: Option<String>,
+    expected: u64,
+    last_seen: bool,
 }
 
-/// Decode a chunk stream and return one batch per chunk.
-pub fn unpack_chunks(
-    frames: Vec<Vec<u8>>,
+fn decode_chunk(
+    frame: Frame,
+    state: &mut ChunkState,
     token: Option<&str>,
     directory: Option<&Path>,
+    max_uncompressed: usize,
+) -> Result<RecordBatch> {
+    if state.last_seen {
+        return Err(ArrowLaneError::Chunk(
+            "chunk after the last chunk".to_string(),
+        ));
+    }
+    let info = frame
+        .chunk
+        .as_ref()
+        .ok_or_else(|| ArrowLaneError::Chunk("frame carries no chunk metadata".to_string()))?
+        .clone();
+    match &state.stream_id {
+        None => state.stream_id = Some(info.id.clone()),
+        Some(existing) if *existing != info.id => {
+            return Err(ArrowLaneError::Chunk(
+                "chunk id changed mid stream".to_string(),
+            ));
+        }
+        Some(_) => {}
+    }
+    if info.index != state.expected {
+        return Err(ArrowLaneError::Chunk(format!(
+            "chunk index {}, expected {}",
+            info.index, state.expected
+        )));
+    }
+    state.expected += 1;
+    state.last_seen = info.last;
+    let chosen = lane_for(frame.try_lane()?, token, directory)?;
+    chosen.decode(&frame, Some(max_uncompressed))
+}
+
+fn end_of_stream(state: &ChunkState) -> Result<()> {
+    if state.last_seen {
+        Ok(())
+    } else {
+        Err(ArrowLaneError::Chunk(
+            "stream ended before the last chunk".to_string(),
+        ))
+    }
+}
+
+/// Lazy decoder over frames that are already in memory.
+pub struct ChunkDecoder<'a, I> {
+    frames: I,
+    token: Option<&'a str>,
+    directory: Option<&'a Path>,
     max_payload: usize,
     max_uncompressed: usize,
-) -> Result<Vec<RecordBatch>> {
-    let decoded = frames
-        .into_iter()
-        .map(|wire| crate::frame::decode_frame(&wire, max_payload, max_uncompressed));
-    decode_chunks(decoded, token, directory, max_uncompressed)
+    state: ChunkState,
+    done: bool,
+}
+
+impl<I> Iterator for ChunkDecoder<'_, I>
+where
+    I: Iterator<Item = Vec<u8>>,
+{
+    type Item = Result<RecordBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let Some(wire) = self.frames.next() else {
+            self.done = true;
+            return match end_of_stream(&self.state) {
+                Ok(()) => None,
+                Err(err) => Some(Err(err)),
+            };
+        };
+        let frame = match crate::frame::decode_frame(&wire, self.max_payload, self.max_uncompressed)
+        {
+            Ok(frame) => frame,
+            Err(err) => {
+                self.done = true;
+                return Some(Err(err));
+            }
+        };
+        match decode_chunk(
+            frame,
+            &mut self.state,
+            self.token,
+            self.directory,
+            self.max_uncompressed,
+        ) {
+            Ok(batch) => Some(Ok(batch)),
+            Err(err) => {
+                self.done = true;
+                Some(Err(err))
+            }
+        }
+    }
+}
+
+/// Decode a chunk stream lazily, one batch per chunk.
+pub fn unpack_chunks<'a, I>(
+    frames: I,
+    token: Option<&'a str>,
+    directory: Option<&'a Path>,
+    max_payload: usize,
+    max_uncompressed: usize,
+) -> ChunkDecoder<'a, I::IntoIter>
+where
+    I: IntoIterator<Item = Vec<u8>>,
+{
+    ChunkDecoder {
+        frames: frames.into_iter(),
+        token,
+        directory,
+        max_payload,
+        max_uncompressed,
+        state: ChunkState::default(),
+        done: false,
+    }
+}
+
+/// Lazy reader over a framed chunk stream.
+pub struct ChunkReader<'a, R> {
+    reader: R,
+    token: Option<&'a str>,
+    directory: Option<&'a Path>,
+    max_payload: usize,
+    max_uncompressed: usize,
+    state: ChunkState,
+    done: bool,
+}
+
+impl<R: Read> Iterator for ChunkReader<'_, R> {
+    type Item = Result<RecordBatch>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let frame = match read_frame(&mut self.reader, self.max_payload, self.max_uncompressed) {
+            Ok(Some(frame)) => frame,
+            Ok(None) => {
+                self.done = true;
+                return match end_of_stream(&self.state) {
+                    Ok(()) => None,
+                    Err(err) => Some(Err(err)),
+                };
+            }
+            Err(err) => {
+                self.done = true;
+                return Some(Err(err));
+            }
+        };
+        match decode_chunk(
+            frame,
+            &mut self.state,
+            self.token,
+            self.directory,
+            self.max_uncompressed,
+        ) {
+            Ok(batch) => Some(Ok(batch)),
+            Err(err) => {
+                self.done = true;
+                Some(Err(err))
+            }
+        }
+    }
+}
+
+/// Read a chunk stream lazily, one batch per chunk.
+pub fn read_chunks<'a, R: Read>(
+    reader: R,
+    token: Option<&'a str>,
+    directory: Option<&'a Path>,
+    max_payload: usize,
+    max_uncompressed: usize,
+) -> ChunkReader<'a, R> {
+    ChunkReader {
+        reader,
+        token,
+        directory,
+        max_payload,
+        max_uncompressed,
+        state: ChunkState::default(),
+        done: false,
+    }
 }
 
 /// Decode a chunk stream into one batch.
-pub fn assemble_chunks(
-    frames: Vec<Vec<u8>>,
+pub fn assemble_chunks<I>(
+    frames: I,
     token: Option<&str>,
     directory: Option<&Path>,
     max_payload: usize,
     max_uncompressed: usize,
-) -> Result<RecordBatch> {
-    let batches = unpack_chunks(frames, token, directory, max_payload, max_uncompressed)?;
+) -> Result<RecordBatch>
+where
+    I: IntoIterator<Item = Vec<u8>>,
+{
+    let batches = unpack_chunks(frames, token, directory, max_payload, max_uncompressed)
+        .collect::<Result<Vec<_>>>()?;
     let schema = batches[0].schema();
     arrow_select::concat::concat_batches(&schema, &batches)
         .map_err(|err| FrameError::payload(format!("batches cannot be joined: {err}")).into())
-}
-
-/// Read a chunk stream from a reader and return one batch per chunk.
-pub fn read_chunks<R: Read>(
-    reader: &mut R,
-    token: Option<&str>,
-    directory: Option<&Path>,
-    max_payload: usize,
-    max_uncompressed: usize,
-) -> Result<Vec<RecordBatch>> {
-    let mut frames: Vec<Result<Frame>> = Vec::new();
-    loop {
-        match read_frame(reader, max_payload, max_uncompressed) {
-            Ok(None) => break,
-            Ok(Some(frame)) => frames.push(Ok(frame)),
-            Err(err) => {
-                frames.push(Err(err));
-                break;
-            }
-        }
-    }
-    decode_chunks(frames, token, directory, max_uncompressed)
 }
 
 /// Plan a lane and return a lazy chunk iterator with the decision.
@@ -361,35 +483,21 @@ pub fn transit_chunks<'a>(
     batches: Vec<RecordBatch>,
     schema: std::sync::Arc<Schema>,
     options: &ChunkOptions<'a>,
-) -> Result<(Vec<Vec<u8>>, Decision)> {
+) -> Result<(impl Iterator<Item = Result<Vec<u8>>> + 'a, Decision)> {
     let total_rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
     let total_bytes: u64 = batches.iter().map(crate::transit::arrow_bytes).sum();
-    let transit_options = TransitOptions {
-        topology: Topology::SameNetwork,
-        policy: Policy::Latency,
-        ..Default::default()
+    let workload = Workload::new(total_rows, total_bytes)?;
+    let mut selection = Selection::new(workload, options.topology);
+    selection.policy = options.policy;
+    selection.allowed = options.allowed.clone();
+    selection.shm_ready = options.token.is_some() || crate::shm::is_ready(options.directory);
+    selection.min_gain = options.min_gain;
+    let decision = select_plan(crate::costmodel::load_default(), &selection)?;
+    let chunk_options = ChunkOptions {
+        lane: Cow::Owned(decision.lane.clone()),
+        ..options.clone()
     };
-    let synthetic = if total_rows == 0 {
-        RecordBatch::new_empty(schema.clone())
-    } else {
-        arrow_select::concat::concat_batches(&schema, &batches)
-            .map_err(|err| FrameError::payload(format!("batches cannot be joined: {err}")))?
-    };
-    let _ = total_bytes;
-    let decision = crate::transit::plan_with(
-        &synthetic,
-        &TransitOptions {
-            topology: transit_options.topology,
-            policy: transit_options.policy,
-            token: options.token,
-            directory: options.directory,
-            ..Default::default()
-        },
-    )?;
-    let mut chunk_options = options.clone();
-    chunk_options.lane = Box::leak(decision.lane.clone().into_boxed_str());
-    let frames: Vec<Vec<u8>> =
-        pack_chunks(batches, schema, &chunk_options)?.collect::<Result<_>>()?;
+    let frames = pack_chunks(batches, schema, &chunk_options)?;
     Ok((frames, decision))
 }
 
@@ -428,7 +536,7 @@ mod tests {
     #[test]
     fn chunks_roundtrip_and_mark_the_last_one() {
         let options = ChunkOptions {
-            lane: "ipc",
+            lane: "ipc".into(),
             rows_per_chunk: 250,
             ..Default::default()
         };
@@ -444,6 +552,7 @@ mod tests {
             MAX_PAYLOAD_BYTES,
             MAX_UNCOMPRESSED_BYTES,
         )
+        .collect::<Result<Vec<_>>>()
         .unwrap();
         assert_eq!(decoded.len(), 4);
         assert_eq!(
@@ -455,7 +564,7 @@ mod tests {
     #[test]
     fn assemble_rebuilds_the_whole_table() {
         let options = ChunkOptions {
-            lane: "ipc-zstd",
+            lane: "ipc-zstd".into(),
             rows_per_chunk: 300,
             ..Default::default()
         };
@@ -477,7 +586,7 @@ mod tests {
     #[test]
     fn empty_batch_produces_one_chunk() {
         let options = ChunkOptions {
-            lane: "ipc",
+            lane: "ipc".into(),
             rows_per_chunk: 100,
             ..Default::default()
         };
@@ -491,7 +600,7 @@ mod tests {
     #[test]
     fn zero_rows_per_chunk_is_rejected() {
         let options = ChunkOptions {
-            lane: "ipc",
+            lane: "ipc".into(),
             rows_per_chunk: 0,
             ..Default::default()
         };
@@ -501,7 +610,7 @@ mod tests {
     #[test]
     fn a_truncated_stream_is_rejected() {
         let options = ChunkOptions {
-            lane: "ipc",
+            lane: "ipc".into(),
             rows_per_chunk: 250,
             ..Default::default()
         };
@@ -518,6 +627,7 @@ mod tests {
                 MAX_PAYLOAD_BYTES,
                 MAX_UNCOMPRESSED_BYTES
             )
+            .collect::<Result<Vec<_>>>()
             .is_err()
         );
     }
@@ -525,7 +635,7 @@ mod tests {
     #[test]
     fn write_then_read_roundtrips() {
         let options = ChunkOptions {
-            lane: "ipc",
+            lane: "ipc".into(),
             rows_per_chunk: 200,
             ..Default::default()
         };
@@ -541,7 +651,35 @@ mod tests {
             MAX_PAYLOAD_BYTES,
             MAX_UNCOMPRESSED_BYTES,
         )
+        .collect::<Result<Vec<_>>>()
         .unwrap();
         assert_eq!(decoded.len(), 3);
+    }
+
+    #[test]
+    fn transit_chunks_honours_options_and_streams() {
+        let options = ChunkOptions {
+            rows_per_chunk: 250,
+            topology: Topology::SameHost,
+            policy: Policy::Cpu,
+            ..Default::default()
+        };
+        let (frames, decision) = transit_chunks(batches(1000), schema(), &options).unwrap();
+        assert!(!decision.lane.is_empty());
+        let frames = frames.collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(frames.len(), 4);
+        let decoded = unpack_chunks(
+            frames,
+            None,
+            None,
+            MAX_PAYLOAD_BYTES,
+            MAX_UNCOMPRESSED_BYTES,
+        )
+        .collect::<Result<Vec<_>>>()
+        .unwrap();
+        assert_eq!(
+            decoded.iter().map(RecordBatch::num_rows).sum::<usize>(),
+            1000
+        );
     }
 }

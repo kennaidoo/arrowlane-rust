@@ -906,6 +906,11 @@ impl Lane for JsonLane {
         }
         checked_payload(frame, cap)?;
         let schema = crate::frame::schema_of(&frame.header)?;
+        if let Some(ncols) = frame.header.get("ncols").and_then(Value::as_u64)
+            && ncols != schema.fields().len() as u64
+        {
+            return Err(FrameError::payload("frame header ncols does not match the schema").into());
+        }
         decode_ndjson(frame.payload.as_ref(), &schema)
     }
 }

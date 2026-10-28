@@ -229,20 +229,32 @@ pub fn read_segment(
         Err(err) => return Err(err.into()),
     };
     let size = file.metadata()?.len();
-    if size != descriptor.offset + descriptor.length {
+    let end = descriptor
+        .offset
+        .checked_add(descriptor.length)
+        .ok_or_else(|| ArrowLaneError::Segment("descriptor range overflows a u64".to_string()))?;
+    if end != size {
         return Err(ArrowLaneError::Segment(format!(
-            "segment is {size} bytes, descriptor claims {}",
-            descriptor.length
+            "segment is {size} bytes, descriptor claims offset {} length {}",
+            descriptor.offset, descriptor.length
         )));
     }
+    let offset = usize::try_from(descriptor.offset)
+        .map_err(|_| ArrowLaneError::Segment("descriptor offset is too large".to_string()))?;
+    let length = usize::try_from(descriptor.length)
+        .map_err(|_| ArrowLaneError::Segment("descriptor length is too large".to_string()))?;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| ArrowLaneError::Segment("descriptor range overflows a usize".to_string()))?;
     // SAFETY: the segment is created by this crate with mode 0600 and an
     // unguessable name, and the caller has already proved it holds the token.
     let mapping = unsafe { memmap2::Mmap::map(&file) }
         .map_err(|err| ArrowLaneError::Segment(format!("segment cannot be mapped: {err}")))?;
     drop(file);
-    let offset = descriptor.offset as usize;
-    let length = descriptor.length as usize;
-    let matched = crc32fast::hash(&mapping[offset..offset + length]) == descriptor.crc32;
+    let payload = mapping.get(offset..end).ok_or_else(|| {
+        ArrowLaneError::Segment("descriptor range is outside the segment".to_string())
+    })?;
+    let matched = crc32fast::hash(payload) == descriptor.crc32;
     if verify && !matched {
         let _ = std::fs::remove_file(&path);
         return Err(ArrowLaneError::Frame(FrameError::ChecksumMismatch));
@@ -347,5 +359,24 @@ mod tests {
     fn descriptor_rejects_unknown_keys() {
         let raw = br#"{"name":"al-x","length":10,"crc32":1,"token":"0123456789abcdef","extra":1}"#;
         assert!(Descriptor::from_bytes(raw).is_err());
+    }
+
+    #[test]
+    fn descriptor_range_overflow_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("arrowlane-shm-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = format!("{NAME_PREFIX}overflow");
+        std::fs::write(dir.join(&name), b"").unwrap();
+        let descriptor = Descriptor {
+            name,
+            length: 1,
+            crc32: 0,
+            token: "0123456789abcdef".to_string(),
+            offset: u64::MAX,
+        };
+        let err = read_segment(&descriptor, Some(&dir), &descriptor.token, false).unwrap_err();
+        assert!(err.to_string().contains("overflows"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

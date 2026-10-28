@@ -19,8 +19,8 @@ pub mod shm;
 pub mod transit;
 
 pub use chunks::{
-    DEFAULT_CHUNK_ROWS, MAX_CHUNK_ROWS, assemble_chunks, pack_chunks, read_chunks, transit_chunks,
-    unpack_chunks, write_chunks,
+    ChunkDecoder, ChunkOptions, ChunkReader, DEFAULT_CHUNK_ROWS, MAX_CHUNK_ROWS, assemble_chunks,
+    pack_chunks, read_chunks, transit_chunks, unpack_chunks, write_chunks,
 };
 pub use costmodel::{CostModel, LaneCost};
 pub use error::{ArrowLaneError, FrameError, Result};
@@ -32,7 +32,7 @@ pub use frame::{
 pub use lanes::{Lane, LaneInfo, available_for, available_names, lane_for, lane_names};
 pub use select::{Decision, Policy, Selection, Topology, Workload, select_plan};
 pub use transit::{
-    TransitOptions, pack, pack_frame, plan, plan_with, transit, unpack, unpack_view,
+    TransitOptions, pack, pack_frame, plan, plan_with, transit, unpack, unpack_frame, unpack_view,
 };
 
 /// Package version, matching the Python package's version line.

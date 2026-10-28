@@ -1,0 +1,59 @@
+# arrowlane-rust
+
+arrowlane moves a tabular batch between processes as a validated frame. The Rust
+core is wire compatible with the Python package of the same name.
+
+Use this file as the first context for an agent or a build tool.
+
+## Build and test
+
+```bash
+cargo build --release
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+The release build contains the `arrowlane` CLI and the `arrowlane_ffi` C ABI.
+
+## Contract
+
+- Wire format: 38 byte prefix, UTF-8 JSON header, opaque payload. Magic `ALN1`.
+- Lanes: `json`, `ipc`, `ipc-zstd`, and `shm` on POSIX.
+- Selection is deterministic and matches the Python selector.
+- Every frame length is capped before allocation. Every payload has a CRC32.
+- A chunk is a complete frame with `chunk: {id, index, last}`.
+
+## Resource rules
+
+- `pack_chunks` is lazy. It encodes chunk n+1 only when the consumer asks.
+- `read_chunks` and `unpack_chunks` return lazy iterators. They do not buffer the
+  whole stream.
+- `assemble_chunks` is the only call that joins all chunks into one batch.
+- `transit_chunks` plans from row and byte totals and returns a lazy iterator.
+
+## Agent entry points
+
+- `arrowlane describe --compact` prints the machine-readable capability manifest.
+- `docs/ai/manifest.json` is the static manifest.
+- `docs/ai/quickstart.md` has a minimal Rust example.
+- `docs/ai/api.md` lists the public calls and their return shapes.
+
+## Safety
+
+- `shm` descriptors are untrusted. Range arithmetic is checked before mapping.
+- The FFI release profile uses `panic = "unwind"`, so `catch_unwind` works.
+- Buffers returned across the FFI are freed with `al_free`; reason strings are
+  freed with `al_free_reason`.
+- CRC32 is not a MAC. Use TLS for remote traffic.
+
+## Interoperability
+
+```bash
+python interop/check_wire.py --rust target/release/arrowlane.exe --rows 50000
+python interop/check_select.py --rust target/release/arrowlane.exe
+cd interop && python check_ffi.py
+```
+
+The Python package and pyarrow environment live beside this repository in
+`../arrowlane`.

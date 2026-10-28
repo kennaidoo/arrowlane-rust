@@ -1,7 +1,5 @@
 //! Command line entry point. Subcommands mirror the Python CLI.
 
-use std::path::PathBuf;
-
 use arrowlane::costmodel::load_default;
 use arrowlane::select::{Policy, Selection, Topology, Workload, select_plan};
 
@@ -13,7 +11,7 @@ fn main() {
     }
     let exit = match args[0].as_str() {
         "select" => cmd_select(&args[1..]),
-        "describe" => cmd_describe(),
+        "describe" => cmd_describe(&args[1..]),
         "pack" => cmd_pack(&args[1..]),
         "unpack" => cmd_unpack(&args[1..]),
         "bench" => cmd_bench(&args[1..]),
@@ -42,8 +40,8 @@ fn usage() {
 
 usage:
   arrowlane select --rows N --bytes N [--topology T] [--policy P] [--json]
-  arrowlane describe [--json]
-  arrowlane pack --lane L --table sample|typed --rows N --out FILE
+  arrowlane describe [--compact]
+  arrowlane pack --lane L [--rows N] [--out FILE]
   arrowlane unpack FILE [--json]
   arrowlane bench --rows N --repeats R
   arrowlane --version
@@ -192,13 +190,10 @@ fn cmd_unpack(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let batch = match arrowlane::unpack(
-        &data,
-        None,
-        None,
-        arrowlane::MAX_PAYLOAD_BYTES,
-        arrowlane::MAX_UNCOMPRESSED_BYTES,
-    ) {
+    let lane = frame.lane();
+    let uncompressed = frame.uncompressed_len;
+    let batch = match arrowlane::unpack_frame(frame, None, None, arrowlane::MAX_UNCOMPRESSED_BYTES)
+    {
         Ok(batch) => batch,
         Err(err) => {
             eprintln!("{err}");
@@ -206,13 +201,25 @@ fn cmd_unpack(args: &[String]) -> i32 {
         }
     };
     if has_flag(args, "--json") {
+        let schema: Vec<serde_json::Value> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| {
+                serde_json::json!({
+                    "name": field.name(),
+                    "type": format!("{:?}", field.data_type()),
+                    "nullable": field.is_nullable(),
+                })
+            })
+            .collect();
         let payload = serde_json::json!({
-            "lane": frame.lane(),
+            "lane": lane,
             "rows": batch.num_rows(),
             "columns": batch.num_columns(),
             "wire_bytes": data.len(),
-            "uncompressed_bytes": frame.uncompressed_len,
-            "schema": format!("{:?}", batch.schema()),
+            "uncompressed_bytes": uncompressed,
+            "schema": schema,
         });
         match serde_json::to_string_pretty(&payload) {
             Ok(text) => println!("{text}"),
@@ -224,7 +231,7 @@ fn cmd_unpack(args: &[String]) -> i32 {
     } else {
         println!(
             "lane={} rows={} columns={} wire_bytes={}",
-            frame.lane().unwrap_or("?"),
+            lane.unwrap_or("?"),
             batch.num_rows(),
             batch.num_columns(),
             data.len()
@@ -390,7 +397,7 @@ fn cmd_select(args: &[String]) -> i32 {
     0
 }
 
-fn cmd_describe() -> i32 {
+fn cmd_describe(args: &[String]) -> i32 {
     let model = load_default();
     let mut lanes: Vec<serde_json::Value> = Vec::new();
     for (name, info) in arrowlane::lanes::lane_infos() {
@@ -402,6 +409,7 @@ fn cmd_describe() -> i32 {
         }));
     }
     let payload = serde_json::json!({
+        "kind": "arrowlane-rust",
         "version": arrowlane::VERSION,
         "frame": {
             "media_type": arrowlane::FRAME_MEDIA_TYPE,
@@ -409,14 +417,30 @@ fn cmd_describe() -> i32 {
             "max_payload": arrowlane::MAX_PAYLOAD_BYTES,
             "max_uncompressed": arrowlane::MAX_UNCOMPRESSED_BYTES,
         },
+        "streaming": {
+            "chunked": true,
+            "default_chunk_rows": arrowlane::DEFAULT_CHUNK_ROWS,
+            "max_chunk_rows": arrowlane::MAX_CHUNK_ROWS,
+            "max_chunks": arrowlane::MAX_CHUNKS,
+            "backpressure": "lazy iterator, one chunk in flight",
+        },
         "lanes": lanes,
         "topologies": Topology::all().iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         "policies": Policy::all().iter().map(|p| p.as_str()).collect::<Vec<_>>(),
         "costmodel_schema_version": model.schema_version(),
         "shm_ready": arrowlane::shm::is_ready(None),
-        "executable": std::env::current_exe().unwrap_or_else(|_| PathBuf::from("?")),
+        "docs": {
+            "readme": "README.md",
+            "agent": "llms.txt",
+        },
     });
-    match serde_json::to_string_pretty(&payload) {
+    let compact = has_flag(args, "--compact") || has_flag(args, "--json");
+    let encoded = if compact {
+        serde_json::to_string(&payload)
+    } else {
+        serde_json::to_string_pretty(&payload)
+    };
+    match encoded {
         Ok(text) => {
             println!("{text}");
             0

@@ -7,7 +7,7 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.90"
 license = "Apache-2.0"
-authors = ["Kennedy Naidoo <kennynaidoo@outlook.com>"]
+authors = ["Kennedy Naidoo"]
 repository = "https://github.com/kennaidoo/arrowlane-rust"
 
 [workspace.dependencies]
@@ -31,7 +31,8 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# The FFI cdylib catches panics at the boundary. Abort would defeat it.
+panic = "unwind"
 strip = "symbols"
 
 [profile.bench]

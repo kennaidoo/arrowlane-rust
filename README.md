@@ -76,62 +76,47 @@ assert_eq!(out, batch);
 
 ## Measured performance
 
-Same table through both implementations on benchmark-host, Windows 11, 8 columns,
-200,000 rows, 13.11 MB of Arrow data, median of 7 runs. Measured with
+Same table through both implementations on Windows 11 x86_64, 8 columns,
+200,000 rows, 13.11 MB of Arrow data, median of 3 runs. Measured with
 `python interop/compare.py --rust target/release/arrowlane.exe --rows 200000`.
+Run the same command with more repeats on the target platform before you quote
+these numbers.
 
 | Lane | Implementation | Wire bytes | Encode ms | Decode ms |
 |---|---|---|---|---|
-| `json` | Python | 43,267,058 | 3702.5 | 2827.0 |
-| `json` | Rust | 42,505,812 | 384.0 | 1574.0 |
-| `json` | speedup | | **9.6x** | **1.8x** |
-| `ipc` | Python | 13,115,693 | 8.1 | 4.1 |
-| `ipc` | Rust | 12,671,117 | 7.5 | 6.4 |
+| `json` | Python | 43,267,058 | 2684.6 | 2102.3 |
+| `json` | Rust | 42,505,812 | 314.8 | 1390.4 |
+| `json` | speedup | | **8.5x** | **1.5x** |
+| `ipc` | Python | 13,115,693 | 7.1 | 3.5 |
+| `ipc` | Rust | 12,671,117 | 6.2 | 5.4 |
 | `ipc` | speedup | | 1.1x | 0.6x |
-| `ipc-zstd` | Python | 1,697,681 | 30.3 | 27.0 |
-| `ipc-zstd` | Rust | 1,625,309 | 39.2 | 19.9 |
-| `ipc-zstd` | speedup | | 0.8x | 1.4x |
+| `ipc-zstd` | Python | 1,697,681 | 30.5 | 23.4 |
+| `ipc-zstd` | Rust | 1,625,309 | 30.7 | 14.5 |
+| `ipc-zstd` | speedup | | 1.0x | 1.6x |
 
 Read this honestly:
 
-- **JSON is where Rust wins, and it wins by a lot.** Encode is 9.6 times faster
-  and decode 1.8 times faster. That is the lane Python pays the most for, because
+- **JSON is where Rust wins, and it wins by a lot.** Encode is 8.5 times faster
+  and decode 1.5 times faster. That is the lane Python pays the most for, because
   it materialises every row as Python objects.
-- **IPC is roughly at parity, and decode is slightly slower.** PyArrow's IPC
-  reader is C++ behind a Python wrapper, so there is no interpreter overhead to
-  remove. The 4.1 ms Python figure comes from a different code path and the gap
-  is within measurement noise on this host.
-- **zstd decode is 1.4 times faster and encode is slower.** The Rust zstd
-  encoder defaults differ from the Python one at the same numeric level. The
-  decode side benefits from the same direct-buffer approach.
+- **IPC encode is at parity, and IPC decode is slower.** PyArrow's IPC reader is
+  C++ behind a Python wrapper, and the Rust path still copies the payload into
+  the Arrow reader. The 5.4 ms versus 3.5 ms gap is a regression, not measurement
+  noise. Treat the copy path as the remaining work.
+- **zstd decode is 1.6 times faster and encode is at parity in this run.** The
+  Rust zstd encoder defaults differ from the Python one at the same numeric
+  level; the encode ratio moved between 0.8x and 1.0x across repeated runs.
 
 Do not read this as "Rust is faster" in general. For a wrapped C++ codec there is
 nothing to win. For the pure-Python lane the win is large. The `shm` lane is not
-benchmarked here because it needs a POSIX host.
-
-### Where the remaining time goes
-
-Measured on the same table with a scratch breakdown:
-
-| Step | ms |
-|---|---|
-| `json` parse (serde_json) | 592 |
-| `json` typed rebuild (Arrow arrays) | ~850 |
-| `json` encode | 384 |
-| `ipc` payload encode | 7.3 |
-| `ipc` frame serialise | 2.8 |
-| `ipc` decode (copying path) | 3.0 |
-| `ipc` decode (zero-copy view) | 0.4 |
-
-The JSON decode is dominated by `serde_json` parse plus typed rebuilding, not by
-any avoidable copy. The frame layer itself is under 1 ms.
+benchmarked here because it needs a POSIX platform.
 
 ### Zero-copy receive
 
 `decode_frame_view` and `unpack_view` slice the caller's buffer instead of copying
-the payload. On the 8-column table that is 3.0 ms down to 0.4 ms for the frame
-layer, and 5.5 ms down to 3.1 ms for a whole unpack. Use them when the frame is
-already in memory, which on a network path it usually is.
+the payload. Use them when the frame is already in memory, which on a network
+path it usually is. The IPC decoder still copies into the Arrow reader; the view
+removes the frame copy, not the decoder copy.
 
 ## API
 
@@ -146,9 +131,10 @@ already in memory, which on a network path it usually is.
 | `transit(batch, &options)` | plan, pack, return bytes and the decision |
 | `pack_chunks(batches, schema, &options)` | lazy chunk iterator, backpressure by laziness |
 | `write_chunks(writer, ...)` | write a chunk stream without joining the payload |
-| `read_chunks(reader, ...)` | read a chunk stream |
+| `read_chunks(reader, ...)` | lazy chunk reader, one batch per item |
+| `unpack_chunks(frames, ...)` | lazy decoder over frames already in memory |
 | `assemble_chunks(frames, ...)` | rebuild one batch from a chunk stream |
-| `transit_chunks(batches, schema, &options)` | plan and return chunk frames |
+| `transit_chunks(batches, schema, &options)` | plan and return a lazy chunk iterator |
 
 ## Interoperability with Python
 
@@ -200,8 +186,8 @@ cargo test --workspace
 cargo bench --bench lanes
 ```
 
-All four pass on this host. The test suite has 52 tests: 47 in the library and 5
-in the FFI crate.
+All four pass. The test suite has 55 tests: 50 in the library and 5 in the FFI
+crate.
 
 ## Security posture
 
@@ -214,8 +200,8 @@ in the FFI crate.
   caller's `max_uncompressed`.
 - Decompression reads at most `cap + 1` bytes, so a frame that lies about its
   uncompressed length cannot allocate without limit.
-- Every FFI function is wrapped in `catch_unwind`, because a panic across the
-  boundary is undefined behaviour.
+- Every FFI entry point that can panic is wrapped in `catch_unwind`. The release
+  profile uses `panic = "unwind"` so the catch is effective.
 
 ## Platform support
 
@@ -223,6 +209,13 @@ The portable lanes run on Linux, macOS and Windows. The `shm` lane is POSIX only
 and reports `is_ready() == false` on Windows. macOS needs `ARROWLAND_SHM_DIR`
 pointing at a memory backed directory.
 
+## Agent docs
+
+- `llms.txt` is the short machine-readable entry point.
+- `docs/ai/manifest.json` is the static capability manifest.
+- `docs/ai/quickstart.md` and `docs/ai/api.md` cover the public calls.
+- `arrowlane describe --compact` prints the live manifest.
+
 ## Licence
 
-Apache-2.0.
+Apache-2.0. See `LICENSE`.

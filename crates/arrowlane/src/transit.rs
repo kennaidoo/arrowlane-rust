@@ -87,8 +87,7 @@ pub fn unpack(
     max_uncompressed: usize,
 ) -> Result<RecordBatch> {
     let frame = decode_frame(data, max_payload, max_uncompressed)?;
-    let chosen = lane(frame.try_lane()?, token, directory)?;
-    chosen.decode(&frame, Some(max_uncompressed))
+    unpack_frame(frame, token, directory, max_uncompressed)
 }
 
 /// Validate and decode a frame that is already in memory, without copying it.
@@ -100,6 +99,16 @@ pub fn unpack_view(
     max_uncompressed: usize,
 ) -> Result<RecordBatch> {
     let frame = decode_frame_view(data, max_payload, max_uncompressed)?;
+    unpack_frame(frame, token, directory, max_uncompressed)
+}
+
+/// Decode a frame that was already parsed, without parsing the wire again.
+pub fn unpack_frame(
+    frame: Frame,
+    token: Option<&str>,
+    directory: Option<&Path>,
+    max_uncompressed: usize,
+) -> Result<RecordBatch> {
     let chosen = lane(frame.try_lane()?, token, directory)?;
     chosen.decode(&frame, Some(max_uncompressed))
 }

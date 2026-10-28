@@ -2,8 +2,8 @@
 //!
 //! The shape is deliberately small: a caller hands over a frame in memory and
 //! gets either a status code or a result buffer it must free with
-//! [`al_free`]. Every function is panic safe, because a panic that crosses the
-//! FFI boundary is undefined behaviour.
+//! [`al_free`]. Every function that can panic is wrapped in `catch_unwind`,
+//! because a panic that crosses the FFI boundary is undefined behaviour.
 //!
 //! Memory ownership:
 //!
@@ -40,7 +40,6 @@ pub struct AlBuffer {
 
 impl AlBuffer {
     fn from_vec(mut bytes: Vec<u8>) -> Self {
-        bytes.shrink_to_fit();
         let cap = bytes.capacity();
         let len = bytes.len();
         let data = bytes.as_mut_ptr();
@@ -80,9 +79,9 @@ pub unsafe extern "C" fn al_free(buffer: AlBuffer) {
     if !buffer.data.is_null() && buffer.cap > 0 {
         // SAFETY: the pointer came from a `Vec<u8>` in this library with the
         // same capacity, and the caller has not freed it before.
-        unsafe {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
             drop(Vec::from_raw_parts(buffer.data, buffer.len, buffer.cap));
-        }
+        }));
     }
 }
 
@@ -171,14 +170,16 @@ pub unsafe extern "C" fn al_free_reason(reason: *const c_char) {
     if reason.is_null() {
         return;
     }
-    let len = unsafe { std::ffi::CStr::from_ptr(reason) }.to_bytes().len();
-    // SAFETY: the pointer came from a `Box<[u8]>` of the same length plus the NUL.
-    unsafe {
-        drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
-            reason as *mut u8,
-            len + 1,
-        )));
-    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let len = unsafe { std::ffi::CStr::from_ptr(reason) }.to_bytes().len();
+        // SAFETY: the pointer came from a `Box<[u8]>` of the same length plus the NUL.
+        unsafe {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                reason as *mut u8,
+                len + 1,
+            )));
+        }
+    }));
 }
 
 /// Decode a frame and return a JSON summary as a buffer.
@@ -199,19 +200,15 @@ pub unsafe extern "C" fn al_inspect(data: *const u8, len: usize) -> AlBuffer {
             arrowlane::MAX_PAYLOAD_BYTES,
             arrowlane::MAX_UNCOMPRESSED_BYTES,
         )?;
-        let batch = arrowlane::unpack(
-            bytes,
-            None,
-            None,
-            arrowlane::MAX_PAYLOAD_BYTES,
-            arrowlane::MAX_UNCOMPRESSED_BYTES,
-        )?;
+        let lane = frame.lane();
+        let uncompressed = frame.uncompressed_len;
+        let batch = arrowlane::unpack_frame(frame, None, None, arrowlane::MAX_UNCOMPRESSED_BYTES)?;
         let summary = serde_json::json!({
-            "lane": frame.lane(),
+            "lane": lane,
             "rows": batch.num_rows(),
             "columns": batch.num_columns(),
             "wire_bytes": len,
-            "uncompressed_bytes": frame.uncompressed_len,
+            "uncompressed_bytes": uncompressed,
         });
         Ok::<_, arrowlane::ArrowLaneError>(serde_json::to_vec(&summary).unwrap_or_default())
     }));

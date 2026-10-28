@@ -8,6 +8,7 @@ use arrow::ipc::writer::StreamWriter;
 use arrow_array::RecordBatch;
 use arrow_buffer::Buffer;
 use arrow_schema::Schema;
+use serde_json::Value;
 
 use crate::error::{FrameError, Result};
 use crate::frame::{Frame, MAX_UNCOMPRESSED_BYTES};
@@ -88,6 +89,11 @@ pub fn check_header_schema(frame: &Frame, batch: &RecordBatch) -> Result<()> {
         return Err(
             FrameError::payload("frame header schema does not match the payload schema").into(),
         );
+    }
+    if let Some(ncols) = frame.header.get("ncols").and_then(Value::as_u64)
+        && ncols != declared.fields().len() as u64
+    {
+        return Err(FrameError::payload("frame header ncols does not match the schema").into());
     }
     Ok(())
 }
@@ -205,5 +211,12 @@ mod tests {
     fn payload_over_cap_is_rejected() {
         let frame = IpcLane.encode(&batch(), None).unwrap();
         assert!(IpcLane.decode(&frame, Some(4)).is_err());
+    }
+
+    #[test]
+    fn header_ncols_must_match_schema() {
+        let mut frame = IpcLane.encode(&batch(), None).unwrap();
+        frame.header.insert("ncols".to_string(), Value::from(99));
+        assert!(IpcLane.decode(&frame, None).is_err());
     }
 }

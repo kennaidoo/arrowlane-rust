@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "arrowlane-rust",
+  "version": "0.3.0",
+  "rust_version": "1.99.1",
+  "wire": {
+    "magic": "ALN1",
+    "format_version": 1,
+    "header_size": 38,
+    "max_header_bytes": 65535,
+    "max_payload_bytes": 536870912,
+    "max_uncompressed_bytes": 1073741824
+  },
+  "lanes": [
+    {"name": "json", "id": 1, "media_type": "application/x-ndjson", "posix_only": false},
+    {"name": "ipc", "id": 2, "media_type": "application/vnd.apache.arrow.stream", "posix_only": false},
+    {"name": "ipc-zstd", "id": 3, "media_type": "application/vnd.apache.arrow.stream", "posix_only": false},
+    {"name": "shm", "id": 4, "media_type": "application/vnd.arrowlane.shm", "posix_only": true}
+  ],
+  "streaming": {
+    "chunked": true,
+    "default_chunk_rows": 50000,
+    "max_chunk_rows": 10000000,
+    "max_chunks": 1000000,
+    "backpressure": "lazy iterator, one chunk in flight"
+  },
+  "commands": {
+    "describe": "arrowlane describe --compact",
+    "select": "arrowlane select --rows N --bytes N [--topology T] [--policy P] [--json]",
+    "pack": "arrowlane pack --lane L [--rows N] [--out FILE]",
+    "unpack": "arrowlane unpack FILE [--json]",
+    "bench": "arrowlane bench --rows N --repeats R"
+  },
+  "docs": {
+    "readme": "README.md",
+    "llms": "llms.txt",
+    "quickstart": "docs/ai/quickstart.md",
+    "api": "docs/ai/api.md",
+    "performance": "docs/performance.md"
+  }
+}
