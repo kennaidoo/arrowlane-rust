@@ -1,0 +1,40 @@
+[package]
+name = "arrowlane"
+description = "Columnar data lanes for ingress and egress in containerized apps, with the core in Rust."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+arrow = { workspace = true }
+arrow-buffer = { workspace = true }
+arrow-schema = { workspace = true }
+arrow-array = { workspace = true }
+arrow-select = { workspace = true }
+zstd = { workspace = true }
+crc32fast = { workspace = true }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+memmap2 = { workspace = true }
+uuid = { workspace = true }
+tempfile = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+
+[lib]
+name = "arrowlane"
+path = "src/lib.rs"
+
+[[bin]]
+name = "arrowlane"
+path = "src/main.rs"
+
+[[bench]]
+name = "lanes"
+harness = false

@@ -1,0 +1,18 @@
+[package]
+name = "arrowlane-ffi"
+description = "C ABI for arrowlane, for Python ctypes and other foreign callers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+name = "arrowlane_ffi"
+crate-type = ["cdylib", "staticlib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+arrowlane = { path = "../arrowlane" }
+serde_json = { workspace = true }

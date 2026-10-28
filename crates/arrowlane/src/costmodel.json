@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "platform": "win32",
+    "python": "3.15.1",
+    "pyarrow": "26.0.0",
+    "measured_at": "2026-10-28T13:43:45+00:00",
+    "method": "bench/probes/codec_probe.py, 4 shapes x 8 columns, median of 3",
+    "source": "bench",
+    "commit": "ae15ce05dfd913850aa404d3251282b140492105",
+    "command": "python bench/probes/codec_probe.py",
+    "shapes": [
+      1000,
+      10000,
+      100000,
+      500000
+    ],
+    "repeats": 3,
+    "wire_source": "estimate",
+    "fixed_source": "max(fitted intercept, seed estimate)",
+    "slope_source": "bench, fixed term held",
+    "estimated_lanes": [
+      "shm"
+    ],
+    "ratio_source": "largest shape",
+    "ratio_spreads": {
+      "ipc": 1.016755,
+      "ipc-zstd": 1.143236,
+      "json": 1.018102
+    },
+    "prediction_errors": {
+      "ipc": {
+        "1000": 0.075537,
+        "10000": 0.693235,
+        "100000": 0.042136,
+        "500000": 0.001868
+      },
+      "ipc-zstd": {
+        "1000": 0.151178,
+        "10000": 0.112998,
+        "100000": 0.080855,
+        "500000": 0.004309
+      },
+      "json": {
+        "1000": 0.495986,
+        "10000": 0.626305,
+        "100000": 0.087489,
+        "500000": 0.003362
+      }
+    },
+    "max_prediction_error": 0.693235
+  },
+  "wire_us_per_mb": {
+    "same_host": 333.0,
+    "same_network": 800.0,
+    "wide_area": 25000.0
+  },
+  "lanes": {
+    "ipc": {
+      "fixed_ms": 0.06,
+      "enc_ms_per_mb": 0.301326,
+      "dec_ms_per_mb": 0.002203,
+      "ratio": 1.000034
+    },
+    "ipc-zstd": {
+      "fixed_ms": 8.094584,
+      "enc_ms_per_mb": 2.249972,
+      "dec_ms_per_mb": 1.280676,
+      "ratio": 0.311601
+    },
+    "json": {
+      "fixed_ms": 0.002,
+      "enc_ms_per_mb": 197.329541,
+      "dec_ms_per_mb": 152.264359,
+      "ratio": 2.615945
+    },
+    "shm": {
+      "fixed_ms": 0.05,
+      "enc_ms_per_mb": 0.05,
+      "dec_ms_per_mb": 0.05,
+      "ratio": 0.0
+    }
+  }
+}

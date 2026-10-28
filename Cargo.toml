@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/arrowlane", "crates/arrowlane-ffi"]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.90"
+license = "Apache-2.0"
+authors = ["Kennedy Naidoo <kennynaidoo@outlook.com>"]
+repository = "https://github.com/kennaidoo/arrowlane-rust"
+
+[workspace.dependencies]
+arrow = { version = "60", default-features = false, features = ["ipc"] }
+arrow-buffer = "60"
+arrow-schema = "60"
+arrow-array = "60"
+arrow-select = "60"
+zstd = { version = "0.14", default-features = false }
+crc32fast = "1"
+base64 = "0.23"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+memmap2 = "0.9"
+uuid = { version = "1", features = ["v4", "v7"] }
+tempfile = "3"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"
