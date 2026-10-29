@@ -34,6 +34,7 @@ The release build contains the `arrowlane` CLI and the `arrowlane_ffi` C ABI.
 
 ## Agent entry points
 
+- `AGENTS.md` is the short command card.
 - `arrowlane describe --compact` prints the machine-readable capability manifest.
 - `docs/ai/manifest.json` is the static manifest.
 - `docs/ai/quickstart.md` has a minimal Rust example.

@@ -200,6 +200,12 @@ pointing at a memory backed or tmpfs directory.
 Windows aarch64 and FreeBSD aarch64 are supported from source. Prebuilt release
 artifacts cover Linux x86_64, Linux aarch64, macOS arm64 and Windows x86_64.
 
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the process and [AGENTS.md](AGENTS.md)
+for the coding-agent commands. Report vulnerabilities through the private
+Security tab, not a public issue.
+
 ## Agent docs
 
 - `llms.txt` is the short machine-readable entry point.
