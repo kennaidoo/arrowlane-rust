@@ -34,7 +34,7 @@
 
 ### Added
 
-- `LICENSE`, `SECURITY.md`, a Windows/Linux/macOS CI matrix, `llms.txt`,
+- `LICENSE`, `SECURITY.md`, Windows/Linux/macOS support, `llms.txt`,
   `docs/ai/manifest.json`, `docs/ai/quickstart.md`, `docs/ai/api.md`, and
   `docs/performance.md`.
 - Regression tests for the descriptor range overflow, the `ncols` check, the

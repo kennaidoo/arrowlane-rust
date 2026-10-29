@@ -197,9 +197,8 @@ x86_64 and Windows aarch64. The `shm` lane is POSIX only and reports
 `is_ready() == false` on Windows. macOS and FreeBSD need `ARROWLAND_SHM_DIR`
 pointing at a memory backed or tmpfs directory.
 
-Windows aarch64 runs native Rust tests in CI. FreeBSD aarch64 runs its test
-suite in a QEMU VM. Neither target is a release artifact until the CI job is
-green.
+Windows aarch64 and FreeBSD aarch64 are supported from source. Prebuilt release
+artifacts cover Linux x86_64, Linux aarch64, macOS arm64 and Windows x86_64.
 
 ## Agent docs
 
