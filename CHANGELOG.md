@@ -39,6 +39,8 @@
   `docs/performance.md`.
 - Regression tests for the descriptor range overflow, the `ncols` check, the
   streaming chunk reader, and `transit_chunks`.
+- Cover the shm segment roundtrip under an explicit directory.
+- Add ARM64 and FreeBSD build and test coverage.
 
 ### Removed
 

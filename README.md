@@ -193,7 +193,7 @@ cargo test --workspace
 cargo bench --bench lanes
 ```
 
-All four pass. The test suite has 55 tests: 50 in the library and 5 in the FFI
+All four pass. The test suite has 56 tests: 51 in the library and 5 in the FFI
 crate.
 
 ## Security posture
@@ -212,9 +212,14 @@ crate.
 
 ## Platform support
 
-The portable lanes run on Linux, macOS and Windows. The `shm` lane is POSIX only
-and reports `is_ready() == false` on Windows. macOS needs `ARROWLAND_SHM_DIR`
-pointing at a memory backed directory.
+The portable lanes run on Linux x86_64, Linux aarch64, macOS arm64, Windows
+x86_64 and Windows aarch64. The `shm` lane is POSIX only and reports
+`is_ready() == false` on Windows. macOS and FreeBSD need `ARROWLAND_SHM_DIR`
+pointing at a memory backed or tmpfs directory.
+
+Windows aarch64 runs native Rust tests in CI. FreeBSD aarch64 runs its test
+suite in a QEMU VM. Neither target is a release artifact until the CI job is
+green.
 
 ## Agent docs
 
