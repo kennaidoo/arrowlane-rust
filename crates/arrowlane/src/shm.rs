@@ -379,4 +379,25 @@ mod tests {
         assert!(err.to_string().contains("overflows"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn segment_roundtrip_under_directory() {
+        if !cfg!(unix) {
+            return;
+        }
+        let base = std::env::var_os("ARROWLAND_SHM_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let dir = base.join(format!("arrowlane-shm-roundtrip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let token = "0123456789abcdef";
+        let payload = b"arrowlane shm roundtrip";
+        let descriptor = write_segment(payload, Some(&dir), Some(token)).unwrap();
+        let segment = read_segment(&descriptor, Some(&dir), token, true).unwrap();
+        let start = segment.offset;
+        let end = start + segment.length;
+        assert_eq!(&segment.mapping[start..end], payload);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
