@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Shared-memory test token in the Rust shm tests"
+regexTarget = "match"
+regexes = ['''0123456789abcdef''']
+paths = ['''crates/arrowlane/src/shm\.rs''']
