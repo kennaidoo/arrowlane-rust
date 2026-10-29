@@ -8,7 +8,7 @@ wire format, the same lanes, and the same deterministic selector. A frame writte
 by either implementation is readable by the other, and the selector returns the
 same lane and reason for the same input.
 
-Status: Alpha. The API may change.
+Status: Alpha source preview. No release artifacts yet. The API may change.
 
 ## What changed from Python
 
