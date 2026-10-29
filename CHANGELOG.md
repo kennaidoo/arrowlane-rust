@@ -18,8 +18,9 @@
 
 ### Changed
 
-- The benchmark image uses a dynamic glibc binary in distroless. A static musl
-  image was rejected because it regressed IPC performance.
+- The benchmark image copies the dynamic glibc loader and libraries into
+  `scratch`. The image is 8.6 MB. Static musl was rejected because it
+  regressed IPC performance.
 - Docker build uses a Cargo registry and target cache.
 - `read_chunks` and `unpack_chunks` now return lazy iterators instead of
   collecting the whole stream.

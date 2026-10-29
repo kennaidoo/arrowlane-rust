@@ -14,7 +14,7 @@ Status: Alpha. The API may change.
 
 | Area | Python | Rust |
 |---|---|---|
-| JSON encode | `to_pylist`, then `json.dumps` per row | bytes written straight from the Arrow arrays |
+| JSON encode | `to_pylist`, then one `orjson` call and an array split | bytes written straight from the Arrow arrays |
 | Frame prefix | `struct.pack` of six parts | one fixed `[u8; 38]` stack array |
 | Checksum | `zlib.crc32` | `crc32fast` (hardware accelerated) |
 | Receive path | payload copied out of the buffer | `decode_frame_view`, slices the caller's buffer |
@@ -22,9 +22,10 @@ Status: Alpha. The API may change.
 | Integer cells | `str()` per value | `write_i64`, no allocation |
 | Float cells | `json.dumps` per value | one reused `String` scratch buffer |
 
-The Python lane rebuilds a Python dict per row and then re-serialises it. The Rust
-lane reads the Arrow buffers directly, so it holds no per-row object at all. That
-is the whole difference, and it is why JSON encode is the lane that gains most.
+The Python lane still rebuilds a Python dict per row, but it serializes the row
+list once and splits the outer array. The Rust lane reads the Arrow buffers
+directly, so it holds no per-row object at all. That is the whole difference,
+and it is why JSON encode is the lane that gains most.
 
 ## Quick start
 
@@ -117,6 +118,12 @@ benchmarked here because it needs a POSIX platform.
 the payload. Use them when the frame is already in memory, which on a network
 path it usually is. The IPC decoder still copies into the Arrow reader; the view
 removes the frame copy, not the decoder copy.
+
+## Container benchmark image
+
+`bench/Dockerfile` builds a dynamic glibc binary and copies the loader, libc
+and libgcc into a `scratch` image. The image is 8.6 MB and keeps glibc speed.
+Static musl was rejected because it regressed IPC performance.
 
 ## API
 
