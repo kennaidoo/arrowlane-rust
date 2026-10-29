@@ -77,40 +77,20 @@ assert_eq!(out, batch);
 
 ## Measured performance
 
-Same table through both implementations on Windows 11 x86_64, 8 columns,
-200,000 rows, 13.11 MB of Arrow data, median of 3 runs. Measured with
-`python interop/compare.py --rust target/release/arrowlane.exe --rows 200000`.
-Run the same command with more repeats on the target platform before you quote
-these numbers.
+The maintained cross-language record is `arrowlane/docs/docker-benchmark.md` in
+the Python repository. It uses the canonical fixture at 200,000 rows and five
+repeats.
 
-| Lane | Implementation | Wire bytes | Encode ms | Decode ms |
-|---|---|---|---|---|
-| `json` | Python | 43,267,058 | 2684.6 | 2102.3 |
-| `json` | Rust | 42,505,812 | 314.8 | 1390.4 |
-| `json` | speedup | | **8.5x** | **1.5x** |
-| `ipc` | Python | 13,115,693 | 7.1 | 3.5 |
-| `ipc` | Rust | 12,671,117 | 6.2 | 5.4 |
-| `ipc` | speedup | | 1.1x | 0.6x |
-| `ipc-zstd` | Python | 1,697,681 | 30.5 | 23.4 |
-| `ipc-zstd` | Rust | 1,625,309 | 30.7 | 14.5 |
-| `ipc-zstd` | speedup | | 1.0x | 1.6x |
+The local comparison command remains:
 
-Read this honestly:
+```bash
+python interop/compare.py --rust target/release/arrowlane.exe --rows 200000
+```
 
-- **JSON is where Rust wins, and it wins by a lot.** Encode is 8.5 times faster
-  and decode 1.5 times faster. That is the lane Python pays the most for, because
-  it materialises every row as Python objects.
-- **IPC encode is at parity, and IPC decode is slower.** PyArrow's IPC reader is
-  C++ behind a Python wrapper, and the Rust path still copies the payload into
-  the Arrow reader. The 5.4 ms versus 3.5 ms gap is a regression, not measurement
-  noise. Treat the copy path as the remaining work.
-- **zstd decode is 1.6 times faster and encode is at parity in this run.** The
-  Rust zstd encoder defaults differ from the Python one at the same numeric
-  level; the encode ratio moved between 0.8x and 1.0x across repeated runs.
-
-Do not read this as "Rust is faster" in general. For a wrapped C++ codec there is
-nothing to win. For the pure-Python lane the win is large. The `shm` lane is not
-benchmarked here because it needs a POSIX platform.
+Report median and spread. JSON is the lane where Rust wins clearly. IPC decode
+is slower because the Rust path copies the payload into the Arrow reader. Do
+not read the record as "Rust is faster" in general. The `shm` lane needs a POSIX
+platform and is not in the Docker table.
 
 ### Zero-copy receive
 
