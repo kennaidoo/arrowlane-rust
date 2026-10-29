@@ -83,6 +83,7 @@ jobs:
           release: "15"
           arch: aarch64
           mem: 8192
+          copyback: false
           prepare: |
             pkg install -y curl bash rust
           run: |
