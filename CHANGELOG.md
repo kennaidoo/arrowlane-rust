@@ -18,10 +18,6 @@
 
 ### Changed
 
-- The benchmark image copies the dynamic glibc loader and libraries into
-  `scratch`. The image is 8.6 MB. Static musl was rejected because it
-  regressed IPC performance.
-- Docker build uses a Cargo registry and target cache.
 - `read_chunks` and `unpack_chunks` now return lazy iterators instead of
   collecting the whole stream.
 - `transit_chunks` returns a lazy iterator. It plans from row and byte totals,
@@ -31,6 +27,7 @@
 - `ChunkOptions` now carries `topology`, `policy`, `allowed` and `min_gain`.
 - Move `tempfile` to the dev dependencies.
 - Pin the toolchain to 1.99.1 with rustfmt and clippy.
+- The security policy uses best-effort review without fixed-day targets.
 
 ### Added
 
