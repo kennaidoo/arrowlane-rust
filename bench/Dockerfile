@@ -15,8 +15,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
       mkdir -p "/out/root$(dirname "$lib")"; \
       cp "$lib" "/out/root$lib"; \
     done \
- && mkdir -p /out/root/lib64 \
- && cp /lib64/ld-linux-x86-64.so.2 /out/root/lib64/ld-linux-x86-64.so.2
+ && loader=$(ldd target/release/arrowlane | awk '/ld-linux/ {print $1}') \
+ && mkdir -p "/out/root$(dirname "$loader")" \
+ && cp "$loader" "/out/root$loader"
 
 FROM scratch
 
